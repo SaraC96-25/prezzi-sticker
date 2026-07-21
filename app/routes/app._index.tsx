@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { SaveBar } from "@shopify/app-bridge-react";
 import {
   Badge,
@@ -46,6 +46,11 @@ import { authenticate } from "../shopify.server";
 
 type LoaderData = {
   products: ProductRecord[];
+  shop: {
+    name: string;
+    myshopifyDomain: string;
+  };
+  loadError: string | null;
 };
 
 type ActionData =
@@ -59,10 +64,28 @@ type ActionData =
     };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const products = await fetchProducts(admin);
+  const { admin, session } = await authenticate.admin(request);
 
-  return { products } satisfies LoaderData;
+  let products: ProductRecord[] = [];
+  let loadError: string | null = null;
+
+  try {
+    products = await fetchProducts(admin);
+  } catch (error) {
+    loadError =
+      error instanceof Error
+        ? error.message
+        : "Impossibile caricare il catalogo prodotti da Shopify.";
+  }
+
+  return {
+    products,
+    shop: {
+      name: session.shop,
+      myshopifyDomain: session.shop,
+    },
+    loadError,
+  } satisfies LoaderData;
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -141,7 +164,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function AppIndex() {
-  const { products: initialProducts } = useLoaderData<typeof loader>();
+  const { products: initialProducts, shop, loadError } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<ActionData>();
 
   const [products, setProducts] = useState<ProductRecord[]>(initialProducts);
@@ -230,7 +253,11 @@ export default function AppIndex() {
   ];
 
   return (
-    <Page title="Prezzi sticker" subtitle="Scegli un prodotto e imposta le sue regole di prezzo." fullWidth>
+    <Page
+      title="Prezzi sticker"
+      subtitle={`Catalogo collegato a ${shop.name} (${shop.myshopifyDomain}). Scegli un prodotto e imposta le sue regole di prezzo.`}
+      fullWidth
+    >
       <SaveBar open={dirty}>
         <button disabled={savePending} onClick={resetDraft} type="button">
           Annulla
@@ -248,6 +275,14 @@ export default function AppIndex() {
 
       <Layout>
         <Layout.Section>
+          {loadError ? (
+            <Box paddingBlockEnd="400">
+              <Banner tone="critical" title="Errore nel caricamento del catalogo">
+                <p>{loadError}</p>
+              </Banner>
+            </Box>
+          ) : null}
+
           <Card>
             <BlockStack gap="400">
               <InlineGrid columns={{ xs: 1, md: "2fr 1fr" }} gap="400">
@@ -274,7 +309,7 @@ export default function AppIndex() {
                   heading="Nessun prodotto trovato"
                   image="https://cdn.shopify.com/static/images/empty-state.svg"
                 >
-                  <p>Prova a cambiare ricerca o filtro di stato.</p>
+                  <p>Prova a cambiare ricerca o filtro di stato nel catalogo di {shop.myshopifyDomain}.</p>
                 </EmptyState>
               ) : (
                 <BlockStack gap="0">
@@ -305,7 +340,7 @@ export default function AppIndex() {
                           <Thumbnail
                             alt={product.imageAlt ?? product.title}
                             size="large"
-                            source={product.imageUrl ?? ""}
+                            source={product.imageUrl || "https://cdn.shopify.com/static/images/empty-state.svg"}
                           />
                           <BlockStack gap="100">
                             <Text as="h3" variant="headingMd">
@@ -392,7 +427,6 @@ export default function AppIndex() {
                       <NumberField
                         label="Prezzo al mq"
                         prefix="€"
-                        step={0.1}
                         value={draftRules.basePerM2}
                         onChange={(value) => setDraftRules({ ...draftRules, basePerM2: value })}
                       />
@@ -418,7 +452,7 @@ export default function AppIndex() {
 
                     <BlockStack gap="200">
                       {draftRules.tiers.map((tier, index) => (
-                        <InlineGrid columns={{ xs: 1, md: "1fr 1fr 1fr auto" }} gap="300" key={`${index}-${tier.from}-${tier.to}`}>
+                        <InlineGrid columns={{ xs: 1, md: "1fr 1fr 1fr auto" }} gap="300" key={index}>
                           <NumberField
                             label="Da (mq)"
                             value={tier.from}
@@ -487,7 +521,7 @@ export default function AppIndex() {
                         </thead>
                         <tbody>
                           {draftRules.formats.map((format, formatIndex) => (
-                            <tr key={`${formatIndex}-${format.w}-${format.h}`}>
+                            <tr key={formatIndex}>
                               <td style={tableCellStyle}>
                                 <InlineGrid columns={3} gap="200">
                                   <NumberField
@@ -682,30 +716,45 @@ export default function AppIndex() {
   );
 }
 
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const message = isRouteErrorResponse(error)
+    ? `${error.status} ${error.statusText}`
+    : error instanceof Error
+      ? error.message
+      : "Errore inatteso nell'app Prezzi Sticker.";
+
+  return (
+    <Page title="Prezzi sticker" fullWidth>
+      <Banner tone="critical" title="Application Error">
+        <p>{message}</p>
+      </Banner>
+    </Page>
+  );
+}
+
 function NumberField({
   label,
   labelHidden,
   prefix,
-  step,
   value,
   onChange,
 }: {
   label: string;
   labelHidden?: boolean;
   prefix?: string;
-  step?: number;
   value: number;
   onChange: (next: number) => void;
 }) {
   return (
     <TextField
       autoComplete="off"
+      inputMode="decimal"
       label={label}
       labelHidden={labelHidden}
       onChange={(next) => onChange(parseNumber(next))}
       prefix={prefix}
-      step={step}
-      type="number"
+      type="text"
       value={String(value)}
     />
   );
