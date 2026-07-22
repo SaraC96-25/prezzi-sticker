@@ -15,6 +15,7 @@ import {
   InlineGrid,
   InlineStack,
   Layout,
+  Modal,
   Page,
   Select,
   Tabs,
@@ -170,6 +171,8 @@ export default function AppIndex() {
   const [products, setProducts] = useState<ProductRecord[]>(initialProducts);
   const [search, setSearch] = useState("");
   const [statusTab, setStatusTab] = useState<"all" | "configured" | "missing">("all");
+  const [catalogStatus, setCatalogStatus] = useState<"all" | "active" | "draft">("all");
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProducts[0]?.id ?? "");
   const [draftRules, setDraftRules] = useState<PricingRules>(
     initialProducts[0]?.effectiveRules ?? EMPTY_RULES,
@@ -181,14 +184,19 @@ export default function AppIndex() {
   const [simWidth, setSimWidth] = useState("10");
   const [simHeight, setSimHeight] = useState("15");
   const [simQty, setSimQty] = useState("300");
+  const [copySourceId, setCopySourceId] = useState("");
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   const selectedProduct = products.find((product) => product.id === selectedId) ?? products[0] ?? null;
+  const copyableProducts = products.filter((product) => product.id !== selectedId);
 
   useEffect(() => {
     if (!selectedProduct) return;
     const nextRules = normalizeRules(selectedProduct.effectiveRules);
     setDraftRules(nextRules);
     setBaseline(serializeRules(nextRules));
+    setCopySourceId("");
+    setCopyMessage(null);
   }, [selectedId, selectedProduct?.id]);
 
   useEffect(() => {
@@ -214,8 +222,14 @@ export default function AppIndex() {
         : statusTab === "configured"
           ? product.configured
           : !product.configured;
+    const matchesCatalogStatus =
+      catalogStatus === "all"
+        ? true
+        : catalogStatus === "active"
+          ? product.status === "ACTIVE"
+          : product.status === "DRAFT";
 
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && matchesCatalogStatus;
   });
 
   const dirty = selectedProduct ? serializeRules(draftRules) !== baseline : false;
@@ -244,6 +258,15 @@ export default function AppIndex() {
     const restored = normalizeRules(selectedProduct.effectiveRules);
     setDraftRules(restored);
     setBaseline(serializeRules(restored));
+    setCopyMessage(null);
+  }
+
+  function copyRulesFromProduct() {
+    const source = copyableProducts.find((product) => product.id === copySourceId);
+    if (!source) return;
+
+    setDraftRules(normalizeRules(source.effectiveRules));
+    setCopyMessage(`Configurazione copiata da ${source.title}. Ora puoi rivederla e salvare.`);
   }
 
   const statusTabs = [
@@ -285,79 +308,57 @@ export default function AppIndex() {
 
           <Card>
             <BlockStack gap="400">
-              <InlineGrid columns={{ xs: 1, md: "2fr 1fr" }} gap="400">
-                <TextField
-                  autoComplete="off"
-                  label="Cerca prodotto"
-                  labelHidden
-                  onChange={setSearch}
-                  placeholder="Cerca un prodotto..."
-                  value={search}
-                />
-                <Tabs
-                  onSelect={(index) => {
-                    const next = statusTabs[index]?.id as "all" | "configured" | "missing";
-                    setStatusTab(next ?? "all");
-                  }}
-                  selected={statusTabs.findIndex((tab) => tab.id === statusTab)}
-                  tabs={statusTabs}
-                />
-              </InlineGrid>
+              <InlineStack align="space-between" blockAlign="center" gap="400">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    Prodotto selezionato
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Apri il selettore per cercare un prodotto per titolo e filtrarlo per stato o configurazione.
+                  </Text>
+                </BlockStack>
+                <Button onClick={() => setProductPickerOpen(true)} variant="primary">
+                  Seleziona il prodotto
+                </Button>
+              </InlineStack>
 
-              {!filteredProducts.length ? (
+              {selectedProduct ? (
+                <InlineStack align="space-between" blockAlign="center" gap="400">
+                  <InlineStack blockAlign="center" gap="300">
+                    <Thumbnail
+                      alt={selectedProduct.imageAlt ?? selectedProduct.title}
+                      size="large"
+                      source={selectedProduct.imageUrl || "https://cdn.shopify.com/static/images/empty-state.svg"}
+                    />
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingMd">
+                        {selectedProduct.title}
+                      </Text>
+                      <Text as="p" tone="subdued" variant="bodyMd">
+                        {summarizeRules(selectedProduct.effectiveRules)}
+                      </Text>
+                    </BlockStack>
+                  </InlineStack>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Badge tone={selectedProduct.status === "ACTIVE" ? "success" : undefined}>
+                      {selectedProduct.status === "ACTIVE"
+                        ? "Attivo"
+                        : selectedProduct.status === "DRAFT"
+                          ? "Bozza"
+                          : selectedProduct.status}
+                    </Badge>
+                    <Badge tone={selectedProduct.configured ? "success" : undefined}>
+                      {selectedProduct.configured ? "Configurato" : "Da configurare"}
+                    </Badge>
+                  </InlineStack>
+                </InlineStack>
+              ) : (
                 <EmptyState
-                  heading="Nessun prodotto trovato"
+                  heading="Nessun prodotto disponibile"
                   image="https://cdn.shopify.com/static/images/empty-state.svg"
                 >
-                  <p>Prova a cambiare ricerca o filtro di stato nel catalogo di {shop.myshopifyDomain}.</p>
+                  <p>Il catalogo collegato a {shop.myshopifyDomain} non contiene ancora prodotti selezionabili.</p>
                 </EmptyState>
-              ) : (
-                <BlockStack gap="0">
-                  {filteredProducts.map((product, index) => (
-                    <button
-                      key={product.id}
-                      onClick={() => setSelectedId(product.id)}
-                      style={{
-                        appearance: "none",
-                        background:
-                          product.id === selectedId
-                            ? "var(--p-color-bg-surface-secondary)"
-                            : "var(--p-color-bg-surface)",
-                        border:
-                          index === 0
-                            ? "1px solid var(--p-color-border)"
-                            : "0 solid var(--p-color-border)",
-                        borderBottom: "1px solid var(--p-color-border)",
-                        borderRadius: index === 0 ? 12 : 0,
-                        cursor: "pointer",
-                        padding: 16,
-                        textAlign: "left",
-                        width: "100%",
-                      }}
-                    >
-                      <InlineStack align="space-between" blockAlign="center" gap="400">
-                        <InlineStack blockAlign="center" gap="300">
-                          <Thumbnail
-                            alt={product.imageAlt ?? product.title}
-                            size="large"
-                            source={product.imageUrl || "https://cdn.shopify.com/static/images/empty-state.svg"}
-                          />
-                          <BlockStack gap="100">
-                            <Text as="h3" variant="headingMd">
-                              {product.title}
-                            </Text>
-                            <Text as="p" tone="subdued" variant="bodyMd">
-                              {summarizeRules(product.effectiveRules)}
-                            </Text>
-                          </BlockStack>
-                        </InlineStack>
-                        <Badge tone={product.configured ? "success" : undefined}>
-                          {product.configured ? "Configurato" : "Da configurare"}
-                        </Badge>
-                      </InlineStack>
-                    </button>
-                  ))}
-                </BlockStack>
               )}
             </BlockStack>
           </Card>
@@ -382,8 +383,33 @@ export default function AppIndex() {
                         {selectedProduct.configured ? "Configurato" : "Da configurare"}
                       </Badge>
                     </InlineStack>
+                    <InlineGrid columns={{ xs: 1, md: "2fr auto" }} gap="300">
+                      <Select
+                        label="Copia configurazione da un altro prodotto"
+                        onChange={(value) => setCopySourceId(value)}
+                        options={[
+                          { label: "Seleziona un prodotto...", value: "" },
+                          ...copyableProducts.map((product) => ({
+                            label: `${product.title} · ${product.materialKey}`,
+                            value: product.id,
+                          })),
+                        ]}
+                        value={copySourceId}
+                      />
+                      <Box paddingBlockStart="500">
+                        <Button disabled={!copySourceId} onClick={copyRulesFromProduct}>
+                          Copia configurazione
+                        </Button>
+                      </Box>
+                    </InlineGrid>
                   </BlockStack>
                 </Card>
+
+                {copyMessage ? (
+                  <Banner title="Configurazione copiata">
+                    <p>{copyMessage}</p>
+                  </Banner>
+                ) : null}
 
                 {fetcher.data && !fetcher.data.ok ? (
                   <Banner tone="critical" title="Salvataggio non riuscito">
@@ -712,6 +738,102 @@ export default function AppIndex() {
           </>
         ) : null}
       </Layout>
+
+      <Modal
+        onClose={() => setProductPickerOpen(false)}
+        open={productPickerOpen}
+        title="Seleziona il prodotto"
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <InlineGrid columns={{ xs: 1, md: "2fr 1fr" }} gap="400">
+              <TextField
+                autoComplete="off"
+                label="Cerca prodotto"
+                labelHidden
+                onChange={setSearch}
+                placeholder="Cerca per titolo o materiale..."
+                value={search}
+              />
+              <Tabs
+                onSelect={(index) => {
+                  const next = statusTabs[index]?.id as "all" | "configured" | "missing";
+                  setStatusTab(next ?? "all");
+                }}
+                selected={statusTabs.findIndex((tab) => tab.id === statusTab)}
+                tabs={statusTabs}
+              />
+            </InlineGrid>
+
+            <InlineGrid columns={{ xs: 1, md: 3 }} gap="300">
+              <Select
+                label="Stato catalogo"
+                onChange={(value) => setCatalogStatus(value as "all" | "active" | "draft")}
+                options={[
+                  { label: "Tutti", value: "all" },
+                  { label: "Attivi", value: "active" },
+                  { label: "Bozza", value: "draft" },
+                ]}
+                value={catalogStatus}
+              />
+            </InlineGrid>
+
+            {!filteredProducts.length ? (
+              <EmptyState
+                heading="Nessun prodotto trovato"
+                image="https://cdn.shopify.com/static/images/empty-state.svg"
+              >
+                <p>Prova a cambiare ricerca o filtro di stato nel catalogo di {shop.myshopifyDomain}.</p>
+              </EmptyState>
+            ) : (
+              <BlockStack gap="200">
+                {filteredProducts.map((product) => (
+                  <Card key={product.id} padding="300">
+                    <InlineStack align="space-between" blockAlign="center" gap="400">
+                      <InlineStack blockAlign="center" gap="300">
+                        <Thumbnail
+                          alt={product.imageAlt ?? product.title}
+                          size="large"
+                          source={product.imageUrl || "https://cdn.shopify.com/static/images/empty-state.svg"}
+                        />
+                        <BlockStack gap="100">
+                          <Text as="h3" variant="headingMd">
+                            {product.title}
+                          </Text>
+                          <Text as="p" tone="subdued" variant="bodyMd">
+                            {summarizeRules(product.effectiveRules)}
+                          </Text>
+                          <InlineStack gap="200" blockAlign="center">
+                            <Badge tone={product.status === "ACTIVE" ? "success" : undefined}>
+                              {product.status === "ACTIVE"
+                                ? "Attivo"
+                                : product.status === "DRAFT"
+                                  ? "Bozza"
+                                  : product.status}
+                            </Badge>
+                            <Badge tone={product.configured ? "success" : undefined}>
+                              {product.configured ? "Configurato" : "Da configurare"}
+                            </Badge>
+                          </InlineStack>
+                        </BlockStack>
+                      </InlineStack>
+                      <Button
+                        onClick={() => {
+                          setSelectedId(product.id);
+                          setProductPickerOpen(false);
+                        }}
+                        variant={product.id === selectedId ? "primary" : "secondary"}
+                      >
+                        {product.id === selectedId ? "Selezionato" : "Seleziona"}
+                      </Button>
+                    </InlineStack>
+                  </Card>
+                ))}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

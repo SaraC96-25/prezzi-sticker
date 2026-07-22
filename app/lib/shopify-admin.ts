@@ -10,6 +10,7 @@ export type ProductRecord = {
   id: string;
   title: string;
   handle: string;
+  status: "ACTIVE" | "DRAFT" | "ARCHIVED" | string;
   imageUrl: string | null;
   imageAlt: string | null;
   materialKey: string;
@@ -25,6 +26,7 @@ const PRODUCTS_QUERY = `#graphql
         id
         title
         handle
+        status
         featuredImage {
           url
           altText
@@ -100,6 +102,7 @@ export async function fetchProducts(admin: AdminGraphqlClient): Promise<ProductR
       id: product.id,
       title: product.title,
       handle: product.handle,
+      status: product.status ?? "DRAFT",
       imageUrl: product.featuredImage?.url ?? null,
       imageAlt: product.featuredImage?.altText ?? null,
       materialKey,
