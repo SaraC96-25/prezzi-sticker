@@ -176,6 +176,9 @@ export default function AppIndex() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [bulkImportValue, setBulkImportValue] = useState("");
   const [bulkImportMessage, setBulkImportMessage] = useState<string | null>(null);
+  const [tierImportOpen, setTierImportOpen] = useState(false);
+  const [tierImportValue, setTierImportValue] = useState("");
+  const [tierImportMessage, setTierImportMessage] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState(initialProducts[0]?.id ?? "");
   const [draftRules, setDraftRules] = useState<PricingRules>(
     initialProducts[0]?.effectiveRules ?? EMPTY_RULES,
@@ -201,6 +204,7 @@ export default function AppIndex() {
     setCopySourceId("");
     setCopyMessage(null);
     setBulkImportMessage(null);
+    setTierImportMessage(null);
   }, [selectedId, selectedProduct?.id]);
 
   useEffect(() => {
@@ -321,6 +325,18 @@ export default function AppIndex() {
         : `Import completato: aggiornati ${updatedCount} formati standard.`,
     );
     setBulkImportOpen(false);
+  }
+
+  function applyTierImport() {
+    const tiers = parseTierImport(tierImportValue);
+    if (!tiers.length) {
+      setTierImportMessage("Nessuno scaglione valido trovato. Controlla il testo incollato e riprova.");
+      return;
+    }
+
+    setDraftRules({ ...draftRules, tiers });
+    setTierImportMessage(`Import completato: aggiornati ${tiers.length} scaglioni.`);
+    setTierImportOpen(false);
   }
 
   const statusTabs = [
@@ -529,6 +545,19 @@ export default function AppIndex() {
                         Aggiungi scaglione
                       </Button>
                     </InlineStack>
+
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" tone="subdued">
+                        Puoi incollare una tabella scaglioni e sostituire tutti i valori in un colpo solo.
+                      </Text>
+                      <Button onClick={() => setTierImportOpen(true)}>Importa scaglioni</Button>
+                    </InlineStack>
+
+                    {tierImportMessage ? (
+                      <Banner title="Importazione scaglioni">
+                        <p>{tierImportMessage}</p>
+                      </Banner>
+                    ) : null}
 
                     <BlockStack gap="200">
                       {draftRules.tiers.map((tier, index) => (
@@ -928,6 +957,33 @@ export default function AppIndex() {
           </BlockStack>
         </Modal.Section>
       </Modal>
+
+      <Modal
+        onClose={() => setTierImportOpen(false)}
+        open={tierImportOpen}
+        primaryAction={{
+          content: "Importa scaglioni",
+          onAction: applyTierImport,
+        }}
+        secondaryActions={[{ content: "Annulla", onAction: () => setTierImportOpen(false) }]}
+        title="Importa sconti a scaglioni"
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" tone="subdued">
+              Incolla righe tipo <code>0 - 1 mq | 126,93€/mq</code>. Gli scaglioni importati sostituiscono quelli attuali.
+            </Text>
+            <TextField
+              autoComplete="off"
+              label="Scaglioni da incollare"
+              multiline={12}
+              onChange={setTierImportValue}
+              placeholder={`0 - 1 mq | 126,93€/mq\n1 - 3 mq | 73,26€/mq`}
+              value={tierImportValue}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -1079,6 +1135,31 @@ function parseBulkFormatImport(value: string) {
   return {
     entries: entries.filter((entry) => entry.w > 0 && entry.h > 0),
   };
+}
+
+function parseTierImport(value: string) {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const tiers: PricingTier[] = [];
+
+  for (const line of lines) {
+    if (line.toLowerCase().includes("scaglione") || /^[-|]+$/.test(line.replace(/\s/g, ""))) continue;
+
+    const row = line.match(
+      /^(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*mq\s*\|\s*([0-9.,]+)\s*€?\s*\/\s*mq$/i,
+    );
+    if (!row) continue;
+
+    tiers.push({
+      from: parseNumber(row[1]),
+      to: parseNumber(row[2]),
+      price: parseNumber(row[3]),
+    });
+  }
+
+  return tiers.sort((left, right) => left.from - right.from);
 }
 
 function formatKey(w: number, h: number) {
