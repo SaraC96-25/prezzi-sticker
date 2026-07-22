@@ -173,6 +173,9 @@ export default function AppIndex() {
   const [statusTab, setStatusTab] = useState<"all" | "configured" | "missing">("all");
   const [catalogStatus, setCatalogStatus] = useState<"all" | "active" | "draft">("all");
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkImportValue, setBulkImportValue] = useState("");
+  const [bulkImportMessage, setBulkImportMessage] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState(initialProducts[0]?.id ?? "");
   const [draftRules, setDraftRules] = useState<PricingRules>(
     initialProducts[0]?.effectiveRules ?? EMPTY_RULES,
@@ -197,6 +200,7 @@ export default function AppIndex() {
     setBaseline(serializeRules(nextRules));
     setCopySourceId("");
     setCopyMessage(null);
+    setBulkImportMessage(null);
   }, [selectedId, selectedProduct?.id]);
 
   useEffect(() => {
@@ -267,6 +271,56 @@ export default function AppIndex() {
 
     setDraftRules(normalizeRules(source.effectiveRules));
     setCopyMessage(`Configurazione copiata da ${source.title}. Ora puoi rivederla e salvare.`);
+  }
+
+  function applyBulkFormatImport() {
+    const parsed = parseBulkFormatImport(bulkImportValue);
+    if (!parsed.entries.length) {
+      setBulkImportMessage("Nessun formato valido trovato. Controlla il testo incollato e riprova.");
+      return;
+    }
+
+    const importedByKey = new Map(
+      parsed.entries.map((entry) => [formatKey(entry.w, entry.h), entry.prices]),
+    );
+
+    let updatedCount = 0;
+    const nextFormats = draftRules.formats.map((format) => {
+      const importedPrices =
+        importedByKey.get(formatKey(format.w, format.h)) ??
+        importedByKey.get(formatKey(format.h, format.w));
+
+      if (!importedPrices) return format;
+
+      updatedCount += 1;
+      return { ...format, prices: [...importedPrices] };
+    });
+
+    const missingFormats = parsed.entries
+      .filter(
+        (entry) =>
+          !draftRules.formats.some(
+            (format) =>
+              formatKey(format.w, format.h) === formatKey(entry.w, entry.h) ||
+              formatKey(format.w, format.h) === formatKey(entry.h, entry.w),
+          ),
+      )
+      .map((entry) => `${entry.w}×${entry.h}`);
+
+    if (!updatedCount) {
+      setBulkImportMessage(
+        "I formati incollati non corrispondono ai formati standard già presenti in questa configurazione.",
+      );
+      return;
+    }
+
+    setDraftRules({ ...draftRules, formats: nextFormats });
+    setBulkImportMessage(
+      missingFormats.length
+        ? `Import completato: aggiornati ${updatedCount} formati. Nessuna corrispondenza per ${missingFormats.join(", ")}.`
+        : `Import completato: aggiornati ${updatedCount} formati standard.`,
+    );
+    setBulkImportOpen(false);
   }
 
   const statusTabs = [
@@ -531,6 +585,19 @@ export default function AppIndex() {
                         Aggiungi formato
                       </Button>
                     </InlineStack>
+
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" tone="subdued">
+                        Puoi anche incollare un listino completo e aggiornare in massa i prezzi dei formati gia presenti.
+                      </Text>
+                      <Button onClick={() => setBulkImportOpen(true)}>Importa prezzi</Button>
+                    </InlineStack>
+
+                    {bulkImportMessage ? (
+                      <Banner title="Importazione prezzi">
+                        <p>{bulkImportMessage}</p>
+                      </Banner>
+                    ) : null}
 
                     <Box borderRadius="200" borderWidth="025" overflowX="scroll">
                       <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
@@ -834,6 +901,33 @@ export default function AppIndex() {
           </BlockStack>
         </Modal.Section>
       </Modal>
+
+      <Modal
+        onClose={() => setBulkImportOpen(false)}
+        open={bulkImportOpen}
+        primaryAction={{
+          content: "Importa prezzi",
+          onAction: applyBulkFormatImport,
+        }}
+        secondaryActions={[{ content: "Annulla", onAction: () => setBulkImportOpen(false) }]}
+        title="Importa prezzi formati standard"
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" tone="subdued">
+              Incolla il listino con blocchi tipo <code>3x3cm</code> e righe <code>50 pezzi | 30€</code>. I prezzi vengono applicati solo ai formati gia presenti.
+            </Text>
+            <TextField
+              autoComplete="off"
+              label="Listino da incollare"
+              multiline={18}
+              onChange={setBulkImportValue}
+              placeholder={`3x3cm\nQuantita | Prezzo\n50 pezzi | 30€\n100 pezzi | 38€`}
+              value={bulkImportValue}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -945,6 +1039,54 @@ function removeFormat(index: number, rules: PricingRules, setRules: (rules: Pric
     ...rules,
     formats: rules.formats.filter((_, formatIndex) => formatIndex !== index),
   });
+}
+
+function parseBulkFormatImport(value: string) {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const entries: Array<{ w: number; h: number; prices: number[] }> = [];
+  let current: { w: number; h: number; prices: number[] } | null = null;
+
+  for (const line of lines) {
+    const header = line.match(/^(\d+(?:[.,]\d+)?)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*cm$/i);
+    if (header) {
+      if (current) entries.push(current);
+      current = {
+        w: parseNumber(header[1]),
+        h: parseNumber(header[2]),
+        prices: QTYS.map(() => 0),
+      };
+      continue;
+    }
+
+    if (!current) continue;
+    if (line.includes("quantita") || /^[-|]+$/.test(line.replace(/\s/g, "").toLowerCase())) continue;
+
+    const row = line.match(/(\d+)\s*pezzi?\s*\|\s*([0-9.,]+)\s*€/i);
+    if (!row) continue;
+
+    const qty = Number(row[1]);
+    const qtyIndex = QTYS.indexOf(qty as (typeof QTYS)[number]);
+    if (qtyIndex < 0) continue;
+
+    current.prices[qtyIndex] = parseNumber(row[2]);
+  }
+
+  if (current) entries.push(current);
+
+  return {
+    entries: entries.filter((entry) => entry.w > 0 && entry.h > 0),
+  };
+}
+
+function formatKey(w: number, h: number) {
+  return [roundNumberKey(w), roundNumberKey(h)].sort((left, right) => left - right).join("x");
+}
+
+function roundNumberKey(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function parseNumber(value: string) {
