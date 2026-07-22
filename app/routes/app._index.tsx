@@ -686,7 +686,7 @@ export default function AppIndex() {
                         label="scaglione applicato"
                         value={
                           simBreakdown.matchedFormat
-                            ? `${simBreakdown.matchedFormat.w}×${simBreakdown.matchedFormat.h} → € ${formatCurrency(simBreakdown.matchedFormatPrice ?? 0)}`
+                            ? `${simBreakdown.matchedFormat.w}×${simBreakdown.matchedFormat.h} → € ${formatCurrency(simBreakdown.matchedFormatPrice ?? 0)} (formato standard)`
                             : simBreakdown.tier
                               ? `${simBreakdown.tier.from}-${simBreakdown.tier.to} mq → € ${formatCurrency(simBreakdown.appliedRate)}/mq`
                               : `Base € ${formatCurrency(simBreakdown.appliedRate)}/mq`

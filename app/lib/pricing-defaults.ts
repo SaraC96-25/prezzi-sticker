@@ -75,9 +75,28 @@ const seededDefaults: Partial<Record<MaterialKey, PricingRules>> = {
 
 export const DEFAULT_RULES = seededDefaults;
 
+const MATERIAL_ALIASES: Record<string, MaterialKey> = {
+  "sticker-vinile": "vinile",
+  "vinileclassico": "vinile",
+  "sticker-trasparente": "trasparente",
+  "sticker-olografico": "olografico",
+  "sticker-prespaziato": "prespaziato",
+  "sticker-magnetico": "magnetico",
+  "supportomagnetico": "magnetico",
+  "sticker-dtf": "dtf",
+  "sticker-oro": "oro",
+  "sticker-stampataglio": "stampataglio",
+  "sticker-mezzotaglio": "mezzotaglio",
+  "sticker-etichette": "etichette",
+  "sticker-maxi": "maxi",
+  "sticker-parete": "parete",
+  "sticker-calpestabile": "calpestabile",
+};
+
 export function normalizeMaterialKey(value?: string | null) {
   if (!value) return "";
-  return value.trim().toLowerCase().replace(/\s+/g, "");
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return MATERIAL_ALIASES[normalized] ?? normalized;
 }
 
 export function getSeededRules(materialKey?: string | null) {
