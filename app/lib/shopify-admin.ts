@@ -72,6 +72,33 @@ const DRAFT_ORDER_CREATE_MUTATION = `#graphql
   }
 `;
 
+const DRAFT_ORDER_AVAILABLE_DELIVERY_OPTIONS_QUERY = `#graphql
+  query PrezziStickerDraftOrderRates($input: DraftOrderAvailableDeliveryOptionsInput!) {
+    draftOrderAvailableDeliveryOptions(input: $input) {
+      availableShippingRates {
+        handle
+        code
+        source
+        title
+        price {
+          amount
+          currencyCode
+        }
+      }
+      availableLocalDeliveryRates {
+        handle
+        code
+        source
+        title
+        price {
+          amount
+          currencyCode
+        }
+      }
+    }
+  }
+`;
+
 const METAFIELD_DEFINITION_MUTATION = `#graphql
   mutation EnsureMetafieldDefinition($definition: MetafieldDefinitionInput!) {
     metafieldDefinitionCreate(definition: $definition) {
@@ -155,6 +182,32 @@ export async function createDraftOrder(
   }>(admin, DRAFT_ORDER_CREATE_MUTATION, { input });
 
   return response.draftOrderCreate;
+}
+
+export async function fetchDraftOrderAvailableDeliveryOptions(
+  admin: AdminGraphqlClient,
+  input: Record<string, unknown>,
+) {
+  const response = await adminGraphql<{
+    draftOrderAvailableDeliveryOptions: {
+      availableShippingRates: Array<{
+        handle: string;
+        code: string;
+        source: string;
+        title: string;
+        price: { amount: string; currencyCode: string };
+      }>;
+      availableLocalDeliveryRates: Array<{
+        handle: string;
+        code: string;
+        source: string;
+        title: string;
+        price: { amount: string; currencyCode: string };
+      }>;
+    };
+  }>(admin, DRAFT_ORDER_AVAILABLE_DELIVERY_OPTIONS_QUERY, { input });
+
+  return response.draftOrderAvailableDeliveryOptions;
 }
 
 export async function ensureMetafieldDefinitions(admin: AdminGraphqlClient) {

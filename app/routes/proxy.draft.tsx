@@ -29,9 +29,20 @@ type DraftPayload = {
     price?: number;
     quantity?: number;
     tipo?: string;
+    handle?: string;
+    variantId?: string | number | null;
     properties?: Record<string, string | number | boolean | null>;
   }>;
 };
+
+function normalizeVariantId(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.startsWith("gid://shopify/ProductVariant/")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/ProductVariant/${raw}`;
+  return null;
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const url = new URL(request.url);
@@ -139,10 +150,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shippingTitle = (payload.shippingLine?.title || "").trim() || (shippingAmount > 0 ? "Spedizione standard" : "Spedizione gratuita");
 
   let lineItems: Array<{
-    title: string;
-    originalUnitPrice: number;
+    title?: string;
+    variantId?: string;
+    originalUnitPriceWithCurrency?: {
+      amount: string;
+      currencyCode: string;
+    };
+    priceOverride?: {
+      amount: string;
+      currencyCode: string;
+    };
     quantity: number;
-    requiresShipping: boolean;
+    requiresShipping?: boolean;
     customAttributes: Array<{ key: string; value: string }>;
   }>;
 
@@ -151,20 +170,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const title = item.title?.trim();
       const price = Number(item.price ?? 0);
       const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
+      const variantId = normalizeVariantId(item.variantId);
 
-      if (!title || !Number.isFinite(price) || price < 0) {
+      if ((!title && !variantId) || !Number.isFinite(price) || price < 0) {
         throw new Error(`L'item ${index + 1} ha titolo o prezzo non valido.`);
+      }
+
+      const customAttributes = Object.entries(item.properties ?? {}).map(([key, value]) => ({
+        key,
+        value: String(value ?? ""),
+      }));
+
+      if (variantId) {
+        return {
+          variantId,
+          quantity,
+          priceOverride: {
+            amount: price.toFixed(2),
+            currencyCode: payload.currency || "EUR",
+          },
+          customAttributes,
+        };
       }
 
       return {
         title,
-        originalUnitPrice: price,
+        originalUnitPriceWithCurrency: {
+          amount: price.toFixed(2),
+          currencyCode: payload.currency || "EUR",
+        },
         quantity,
         requiresShipping: true,
-        customAttributes: Object.entries(item.properties ?? {}).map(([key, value]) => ({
-          key,
-          value: String(value ?? ""),
-        })),
+        customAttributes,
       };
     });
   } catch (error) {
