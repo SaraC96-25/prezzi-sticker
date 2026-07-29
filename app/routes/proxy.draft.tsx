@@ -240,6 +240,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       email,
       phone,
       shippingAddress,
+      billingAddress: shippingAddress,
       shippingLine: {
         title: shippingTitle,
         priceWithCurrency: {
