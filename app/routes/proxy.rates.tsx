@@ -5,6 +5,7 @@ import { unauthenticated } from "../shopify.server";
 
 type RatesPayload = {
   currency?: string;
+  customerId?: string | number | null;
   shippingAddress?: {
     firstName?: string;
     lastName?: string;
@@ -34,6 +35,15 @@ function normalizeVariantId(value: string | number | null | undefined) {
   if (!raw) return null;
   if (raw.startsWith("gid://shopify/ProductVariant/")) return raw;
   if (/^\d+$/.test(raw)) return `gid://shopify/ProductVariant/${raw}`;
+  return null;
+}
+
+function normalizeCustomerId(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.startsWith("gid://shopify/Customer/")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/Customer/${raw}`;
   return null;
 }
 
@@ -82,6 +92,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
+    const customerId = normalizeCustomerId(payload.customerId);
     const lineItems = payload.items.map((item, index) => {
       const title = (item.title || "").trim();
       const price = Number(item.price ?? 0);
@@ -130,6 +141,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       lineItems,
       shippingAddress,
       marketRegionCountryCode: shippingAddress.countryCode,
+      purchasingEntity: customerId ? { customerId } : undefined,
     });
 
     const rates = [
@@ -148,6 +160,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shop,
       ratesCount: rates.length,
       countryCode: shippingAddress.countryCode,
+      customerId: customerId ?? null,
       firstRate: rates[0]?.title ?? null,
     });
 

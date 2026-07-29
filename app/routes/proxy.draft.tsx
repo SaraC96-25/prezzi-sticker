@@ -5,6 +5,7 @@ import { unauthenticated } from "../shopify.server";
 
 type DraftPayload = {
   currency?: string;
+  customerId?: string | number | null;
   email?: string;
   phone?: string;
   shippingAddress?: {
@@ -41,6 +42,15 @@ function normalizeVariantId(value: string | number | null | undefined) {
   if (!raw) return null;
   if (raw.startsWith("gid://shopify/ProductVariant/")) return raw;
   if (/^\d+$/.test(raw)) return `gid://shopify/ProductVariant/${raw}`;
+  return null;
+}
+
+function normalizeCustomerId(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.startsWith("gid://shopify/Customer/")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/Customer/${raw}`;
   return null;
 }
 
@@ -143,6 +153,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const shippingAmount = Number(payload.shippingLine?.amount ?? 0);
+  const customerId = normalizeCustomerId(payload.customerId);
   if (!Number.isFinite(shippingAmount) || shippingAmount < 0) {
     return Response.json({ error: "Costo spedizione non valido." }, { status: 400 });
   }
@@ -225,6 +236,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const result = await createDraftOrder(admin, {
       presentmentCurrencyCode: payload.currency || "EUR",
+      purchasingEntity: customerId ? { customerId } : undefined,
       email,
       phone,
       shippingAddress,
