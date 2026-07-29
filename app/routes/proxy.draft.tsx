@@ -118,7 +118,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     const result = await createDraftOrder(admin, {
-      currencyCode: payload.currency || "EUR",
+      presentmentCurrencyCode: payload.currency || "EUR",
       lineItems,
       note: "Creato da Prezzi Sticker via App Proxy",
     });
