@@ -5,6 +5,25 @@ import { unauthenticated } from "../shopify.server";
 
 type DraftPayload = {
   currency?: string;
+  email?: string;
+  phone?: string;
+  shippingAddress?: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    company?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    provinceCode?: string;
+    zip?: string;
+    countryCode?: string;
+    phone?: string;
+  };
+  shippingLine?: {
+    title?: string;
+    amount?: number;
+  };
   items?: Array<{
     title?: string;
     price?: number;
@@ -73,10 +92,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return Response.json({ error: "Nessun item da trasformare in Draft Order." }, { status: 400 });
   }
 
+  const email = (payload.email || payload.shippingAddress?.email || "").trim();
+  const phone = (payload.phone || payload.shippingAddress?.phone || "").trim();
+  const shippingInput = payload.shippingAddress ?? {};
+  const shippingAddress = {
+    firstName: (shippingInput.firstName || "").trim(),
+    lastName: (shippingInput.lastName || "").trim(),
+    company: (shippingInput.company || "").trim(),
+    address1: (shippingInput.address1 || "").trim(),
+    address2: (shippingInput.address2 || "").trim(),
+    city: (shippingInput.city || "").trim(),
+    provinceCode: (shippingInput.provinceCode || "").trim().toUpperCase(),
+    zip: (shippingInput.zip || "").trim(),
+    countryCode: (shippingInput.countryCode || "").trim().toUpperCase(),
+    phone,
+  };
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return Response.json({ error: "Email di spedizione mancante o non valida." }, { status: 400 });
+  }
+
+  if (!phone) {
+    return Response.json({ error: "Telefono di spedizione mancante." }, { status: 400 });
+  }
+
+  if (
+    !shippingAddress.firstName ||
+    !shippingAddress.lastName ||
+    !shippingAddress.address1 ||
+    !shippingAddress.city ||
+    !shippingAddress.zip ||
+    !shippingAddress.countryCode
+  ) {
+    return Response.json({ error: "Indirizzo di spedizione incompleto." }, { status: 400 });
+  }
+
+  if (shippingAddress.countryCode === "IT" && !shippingAddress.provinceCode) {
+    return Response.json({ error: "Provincia richiesta per la spedizione in Italia." }, { status: 400 });
+  }
+
+  const shippingAmount = Number(payload.shippingLine?.amount ?? 0);
+  if (!Number.isFinite(shippingAmount) || shippingAmount < 0) {
+    return Response.json({ error: "Costo spedizione non valido." }, { status: 400 });
+  }
+
+  const shippingTitle = (payload.shippingLine?.title || "").trim() || (shippingAmount > 0 ? "Spedizione standard" : "Spedizione gratuita");
+
   let lineItems: Array<{
     title: string;
     originalUnitPrice: number;
     quantity: number;
+    requiresShipping: boolean;
     customAttributes: Array<{ key: string; value: string }>;
   }>;
 
@@ -94,6 +160,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         title,
         originalUnitPrice: price,
         quantity,
+        requiresShipping: true,
         customAttributes: Object.entries(item.properties ?? {}).map(([key, value]) => ({
           key,
           value: String(value ?? ""),
@@ -115,10 +182,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shop,
       currencyCode: payload.currency || "EUR",
       lineItemsCount: lineItems.length,
+      shippingCountryCode: shippingAddress.countryCode,
+      shippingAmount,
     });
 
     const result = await createDraftOrder(admin, {
       presentmentCurrencyCode: payload.currency || "EUR",
+      email,
+      phone,
+      shippingAddress,
+      shippingLine: {
+        title: shippingTitle,
+        priceWithCurrency: {
+          amount: shippingAmount.toFixed(2),
+          currencyCode: payload.currency || "EUR",
+        },
+      },
       lineItems,
       note: "Creato da Prezzi Sticker via App Proxy",
     });
