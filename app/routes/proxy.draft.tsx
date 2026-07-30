@@ -181,9 +181,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const title = item.title?.trim();
       const price = Number(item.price ?? 0);
       const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
-      const variantId = normalizeVariantId(item.variantId);
 
-      if ((!title && !variantId) || !Number.isFinite(price) || price < 0) {
+      if (!title || !Number.isFinite(price) || price < 0) {
         throw new Error(`L'item ${index + 1} ha titolo o prezzo non valido.`);
       }
 
@@ -191,18 +190,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         key,
         value: String(value ?? ""),
       }));
-
-      if (variantId) {
-        return {
-          variantId,
-          quantity,
-          priceOverride: {
-            amount: price.toFixed(2),
-            currencyCode: payload.currency || "EUR",
-          },
-          customAttributes,
-        };
-      }
 
       return {
         title,
