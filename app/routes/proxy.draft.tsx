@@ -1,4 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
+import { applyMarketingConsent } from "../lib/marketing-consent";
 import { createDraftOrder } from "../lib/shopify-admin";
 import { sanitizeShopDomain, verifyAppProxySignature } from "../lib/proxy-auth";
 import { unauthenticated } from "../shopify.server";
@@ -24,6 +25,14 @@ type DraftPayload = {
   shippingLine?: {
     title?: string;
     amount?: number;
+  };
+  acceptsMarketing?: boolean;
+  marketingConsent?: {
+    email?: "SUBSCRIBED" | "NOT_SUBSCRIBED" | "UNSUBSCRIBED";
+    sms?: "SUBSCRIBED" | "NOT_SUBSCRIBED" | "UNSUBSCRIBED";
+    whatsapp?: "SUBSCRIBED" | "NOT_SUBSCRIBED" | "UNSUBSCRIBED";
+    consentUpdatedAt?: string;
+    consentCollectedFrom?: string;
   };
   items?: Array<{
     title?: string;
@@ -213,6 +222,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const { admin } = await unauthenticated.admin(shop);
+
+    const wantsMarketing =
+      payload.acceptsMarketing === true ||
+      payload.marketingConsent?.email === "SUBSCRIBED" ||
+      payload.marketingConsent?.sms === "SUBSCRIBED";
+
+    const consentCustomerId = await applyMarketingConsent(admin, {
+      email,
+      phone,
+      firstName: shippingAddress.firstName,
+      lastName: shippingAddress.lastName,
+      emailState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
+      smsState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
+      consentUpdatedAt: payload.marketingConsent?.consentUpdatedAt,
+    });
+
     console.info(`${logPrefix} Creating draft order`, {
       shop,
       currencyCode: payload.currency || "EUR",
@@ -223,7 +248,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const result = await createDraftOrder(admin, {
       presentmentCurrencyCode: payload.currency || "EUR",
-      purchasingEntity: customerId ? { customerId } : undefined,
+      purchasingEntity: customerId
+        ? { customerId }
+        : consentCustomerId
+          ? { customerId: consentCustomerId }
+          : undefined,
       email,
       phone,
       shippingAddress,
