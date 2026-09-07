@@ -17,6 +17,7 @@ export type PricingFormat = {
 
 export type PricingRules = {
   basePerM2: number;
+  fixedOrderFee: number;
   minOrder: number;
   rounding: RoundingMode;
   recognize: boolean;
@@ -39,6 +40,23 @@ export type PricingBreakdown = {
   mqPerPiece: number;
   totalMq: number;
   appliedRate: number;
+  fixedOrderFee: number;
+  tierLines: Array<{
+    from: number;
+    to: number;
+    mq: number;
+    rate: number;
+    amount: number;
+    isBaseRate: boolean;
+  }>;
+  standardFloor: {
+    format: PricingFormat;
+    requestedQuantity: number;
+    priceQuantity: number;
+    price: number;
+  } | null;
+  floorApplied: boolean;
+  exactStandardMatch: boolean;
   subtotal: number;
   roundedTotal: number;
   total: number;
@@ -49,6 +67,7 @@ export type PricingBreakdown = {
 
 export const EMPTY_RULES: PricingRules = {
   basePerM2: 0,
+  fixedOrderFee: 20,
   minOrder: 19,
   rounding: "0.10",
   recognize: true,
@@ -70,6 +89,9 @@ export function clampNonNegative(value: number) {
 export function normalizeRules(input?: Partial<PricingRules> | null): PricingRules {
   return {
     basePerM2: roundDecimal(clampNonNegative(Number(input?.basePerM2 ?? EMPTY_RULES.basePerM2))),
+    fixedOrderFee: roundDecimal(
+      clampNonNegative(Number(input?.fixedOrderFee ?? EMPTY_RULES.fixedOrderFee)),
+    ),
     minOrder: roundDecimal(clampNonNegative(Number(input?.minOrder ?? EMPTY_RULES.minOrder))),
     rounding: normalizeRounding(input?.rounding),
     recognize: input?.recognize ?? EMPTY_RULES.recognize,
@@ -137,6 +159,17 @@ export function formatLot(format: PricingFormat | null, quantity: number) {
   return roundDecimal(clampNonNegative(format.prices[index] ?? 0));
 }
 
+export function formatLotAtOrBelow(format: PricingFormat | null, quantity: number) {
+  if (!format) return null;
+  let index = -1;
+  for (let current = 0; current < QTYS.length; current += 1) {
+    if (QTYS[current] <= quantity) index = current;
+  }
+  if (index < 0) index = 0;
+  const price = roundDecimal(clampNonNegative(format.prices[index] ?? 0));
+  return { price, priceQuantity: QTYS[index] };
+}
+
 export function tierRate(tiers: PricingTier[], totalMq: number) {
   return (
     tiers.find((tier) => totalMq >= tier.from && totalMq <= tier.to) ?? null
@@ -162,18 +195,27 @@ export function priceCustom(
   heightCm: number,
   quantity: number,
 ): PricingBreakdown {
-  const mqPerPiece = roundDecimal((widthCm * heightCm) / 10000, 4);
-  const totalMq = roundDecimal(mqPerPiece * quantity, 4);
+  const mqPerPiece = (widthCm * heightCm) / 10000;
+  const totalMq = mqPerPiece * quantity;
+  const tierLines = progressiveTierLines(rules, totalMq);
   const tier = tierRate(rules.tiers, totalMq);
-  const appliedRate = tier?.price ?? rules.basePerM2;
-  const subtotal = roundDecimal(appliedRate * totalMq);
-  const roundedTotal = roundTotal(Math.max(subtotal, rules.minOrder), rules.rounding);
+  const appliedRate = tierLines.at(-1)?.rate ?? rules.basePerM2;
+  const variableTotal = tierLines.reduce((sum, line) => sum + line.amount, 0);
+  const subtotal = rules.fixedOrderFee + variableTotal;
+  const floor = standardFloor(rules.formats, widthCm, heightCm, quantity);
+  const beforeRounding = Math.max(subtotal, rules.minOrder, floor?.price ?? 0);
+  const roundedTotal = roundTotal(beforeRounding, rules.rounding);
 
   return {
     mqPerPiece,
     totalMq,
     appliedRate: roundDecimal(appliedRate),
-    subtotal,
+    fixedOrderFee: rules.fixedOrderFee,
+    tierLines,
+    standardFloor: floor,
+    floorApplied: Boolean(floor && floor.price > subtotal && floor.price >= rules.minOrder),
+    exactStandardMatch: false,
+    subtotal: roundDecimal(subtotal),
     roundedTotal,
     total: roundedTotal,
     matchedFormat: null,
@@ -204,6 +246,11 @@ export function priceFor(
       mqPerPiece: roundDecimal((widthCm * heightCm) / 10000, 4),
       totalMq: roundDecimal(((widthCm * heightCm) / 10000) * quantity, 4),
       appliedRate: standardPrice ?? 0,
+      fixedOrderFee: 0,
+      tierLines: [],
+      standardFloor: null,
+      floorApplied: false,
+      exactStandardMatch: false,
       subtotal,
       roundedTotal,
       total: roundedTotal,
@@ -213,10 +260,11 @@ export function priceFor(
     };
   }
 
-  if (normalized.recognize) {
+  {
     const matched = matchFormat(normalized.formats, widthCm, heightCm);
-    const matchedPrice = formatLot(matched, quantity);
-    if (matched && matchedPrice !== null) {
+    const matchedLot = formatLotAtOrBelow(matched, quantity);
+    const matchedPrice = matchedLot?.price ?? null;
+    if (matched && matchedLot && matchedPrice !== null) {
       const roundedTotal = roundTotal(
         Math.max(matchedPrice, normalized.minOrder),
         normalized.rounding,
@@ -226,6 +274,16 @@ export function priceFor(
         mqPerPiece: roundDecimal((widthCm * heightCm) / 10000, 4),
         totalMq: roundDecimal(((widthCm * heightCm) / 10000) * quantity, 4),
         appliedRate: matchedPrice,
+        fixedOrderFee: 0,
+        tierLines: [],
+        standardFloor: {
+          format: matched,
+          requestedQuantity: quantity,
+          priceQuantity: matchedLot.priceQuantity,
+          price: matchedPrice,
+        },
+        floorApplied: false,
+        exactStandardMatch: true,
         subtotal: matchedPrice,
         roundedTotal,
         total: roundedTotal,
@@ -241,7 +299,7 @@ export function priceFor(
 
 export function summarizeRules(rules: PricingRules) {
   const normalized = normalizeRules(rules);
-  return `Base €${formatCurrency(normalized.basePerM2)}/mq · ${normalized.tiers.length} scaglioni · ${normalized.formats.length} formati standard`;
+  return `Quota €${formatCurrency(normalized.fixedOrderFee)} · base €${formatCurrency(normalized.basePerM2)}/mq · ${normalized.tiers.length} scaglioni · ${normalized.formats.length} formati standard`;
 }
 
 export function formatCurrency(value: number) {
@@ -277,4 +335,78 @@ export function analyzeTierRanges(tiers: PricingTier[]) {
 
 function sameNumber(left: number, right: number) {
   return Math.abs(left - right) < 0.001;
+}
+
+function formatFits(format: PricingFormat, widthCm: number, heightCm: number) {
+  return (
+    (format.w <= widthCm + 0.001 && format.h <= heightCm + 0.001) ||
+    (format.h <= widthCm + 0.001 && format.w <= heightCm + 0.001)
+  );
+}
+
+function standardFloor(
+  formats: PricingFormat[],
+  widthCm: number,
+  heightCm: number,
+  quantity: number,
+): PricingBreakdown["standardFloor"] {
+  let best: PricingBreakdown["standardFloor"] = null;
+  for (const format of formats) {
+    if (!formatFits(format, widthCm, heightCm)) continue;
+    const lot = formatLotAtOrBelow(format, quantity);
+    if (!lot || (best && best.price >= lot.price)) continue;
+    best = {
+      format,
+      requestedQuantity: quantity,
+      priceQuantity: lot.priceQuantity,
+      price: lot.price,
+    };
+  }
+  return best;
+}
+
+function progressiveTierLines(
+  rules: PricingRules,
+  totalMq: number,
+): PricingBreakdown["tierLines"] {
+  if (!(totalMq > 0)) return [];
+  const lines: PricingBreakdown["tierLines"] = [];
+  const tiers = [...rules.tiers].sort((left, right) => left.from - right.from);
+  let cursor = 0;
+
+  for (const tier of tiers) {
+    if (cursor >= totalMq) break;
+    const from = Math.max(0, tier.from);
+    const to = Math.max(from, tier.to);
+    if (to <= cursor) continue;
+    if (from > cursor) {
+      const gapEnd = Math.min(from, totalMq);
+      pushTierLine(lines, cursor, gapEnd, rules.basePerM2, true);
+      cursor = gapEnd;
+    }
+    if (cursor >= totalMq) break;
+    const segmentStart = Math.max(cursor, from);
+    const segmentEnd = Math.min(to, totalMq);
+    if (segmentEnd > segmentStart) {
+      pushTierLine(lines, segmentStart, segmentEnd, tier.price, false);
+      cursor = segmentEnd;
+    }
+  }
+
+  if (cursor < totalMq) {
+    pushTierLine(lines, cursor, totalMq, rules.basePerM2, true);
+  }
+  return lines;
+}
+
+function pushTierLine(
+  lines: PricingBreakdown["tierLines"],
+  from: number,
+  to: number,
+  rate: number,
+  isBaseRate: boolean,
+) {
+  const mq = to - from;
+  if (!(mq > 0)) return;
+  lines.push({ from, to, mq, rate, amount: mq * rate, isBaseRate });
 }

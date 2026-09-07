@@ -514,12 +514,18 @@ export default function AppIndex() {
                 <Card>
                   <BlockStack gap="300">
                     <Text as="h3" variant="headingMd">
-                      Prezzo base al mq
+                      Prezzo su misura
                     </Text>
                     <Text as="p" tone="subdued">
-                      Usato per le misure personalizzate quando nessuno scaglione è applicabile.
+                      La quota fissa si somma agli scaglioni progressivi. Il prezzo base al mq copre eventuali intervalli non definiti.
                     </Text>
                     <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                      <NumberField
+                        label="Quota fissa d'ordine"
+                        prefix="€"
+                        value={draftRules.fixedOrderFee}
+                        onChange={(value) => setDraftRules({ ...draftRules, fixedOrderFee: value })}
+                      />
                       <NumberField
                         label="Prezzo al mq"
                         prefix="€"
@@ -538,7 +544,7 @@ export default function AppIndex() {
                           Sconti a scaglioni
                         </Text>
                         <Text as="p" tone="subdued">
-                          Gli scaglioni si applicano ai mq totali dell'ordine.
+                          Ogni tariffa si applica solo ai mq compresi nella propria fascia (calcolo progressivo).
                         </Text>
                       </BlockStack>
                       <Button onClick={() => setDraftRules({ ...draftRules, tiers: [...draftRules.tiers, { from: 0, to: 0, price: draftRules.basePerM2 }] })}>
@@ -722,15 +728,9 @@ export default function AppIndex() {
                       </table>
                     </Box>
 
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="span">Riconosci i formati standard nelle misure personalizzate</Text>
-                      <Button
-                        onClick={() => setDraftRules({ ...draftRules, recognize: !draftRules.recognize })}
-                        variant={draftRules.recognize ? "primary" : "secondary"}
-                      >
-                        {draftRules.recognize ? "Attivo" : "Disattivato"}
-                      </Button>
-                    </InlineStack>
+                    <Text as="p" tone="subdued">
+                      Le misure che coincidono con un formato standard usano sempre il listino. Per le altre misure, il prezzo non può scendere sotto il formato standard più caro che vi entra, anche ruotato.
+                    </Text>
                   </BlockStack>
                 </Card>
 
@@ -804,17 +804,30 @@ export default function AppIndex() {
                     <BlockStack gap="150">
                       <MetricRow label="mq a pezzo" value={formatMetric(simBreakdown.mqPerPiece)} />
                       <MetricRow label="mq totali" value={`${formatMetric(simBreakdown.totalMq)} mq`} />
-                      <MetricRow
-                        label="scaglione applicato"
-                        value={
-                          simBreakdown.matchedFormat
-                            ? `${simBreakdown.matchedFormat.w}×${simBreakdown.matchedFormat.h} → € ${formatCurrency(simBreakdown.matchedFormatPrice ?? 0)} (formato standard)`
-                            : simBreakdown.tier
-                              ? `${simBreakdown.tier.from}-${simBreakdown.tier.to} mq → € ${formatCurrency(simBreakdown.appliedRate)}/mq`
-                              : `Base € ${formatCurrency(simBreakdown.appliedRate)}/mq`
-                        }
-                      />
-                      <MetricRow label="subtotal" value={`€ ${formatCurrency(simBreakdown.subtotal)}`} />
+                      {simBreakdown.exactStandardMatch || simMode === "standard" ? (
+                        <MetricRow
+                          label="formato standard"
+                          value={`${simBreakdown.matchedFormat?.w ?? simWidth}×${simBreakdown.matchedFormat?.h ?? simHeight} → € ${formatCurrency(simBreakdown.matchedFormatPrice ?? 0)}`}
+                        />
+                      ) : (
+                        <>
+                          <MetricRow label="quota fissa" value={`€ ${formatCurrency(simBreakdown.fixedOrderFee)}`} />
+                          {simBreakdown.tierLines.map((line, index) => (
+                            <MetricRow
+                              key={`${line.from}-${line.to}-${index}`}
+                              label={line.isBaseRate ? "intervallo a tariffa base" : `scaglione ${formatMetric(line.from)}–${formatMetric(line.to)} mq`}
+                              value={`${formatMetric(line.mq)} mq × € ${formatCurrency(line.rate)} = € ${formatCurrency(line.amount)}`}
+                            />
+                          ))}
+                          {simBreakdown.standardFloor ? (
+                            <MetricRow
+                              label={simBreakdown.floorApplied ? "floor formato standard applicato" : "floor formato standard (non necessario)"}
+                              value={`${simBreakdown.standardFloor.format.w}×${simBreakdown.standardFloor.format.h} · ${simBreakdown.standardFloor.priceQuantity} pz → € ${formatCurrency(simBreakdown.standardFloor.price)}`}
+                            />
+                          ) : null}
+                        </>
+                      )}
+                      <MetricRow label="subtotale" value={`€ ${formatCurrency(simBreakdown.subtotal)}`} />
                     </BlockStack>
 
                     <Divider />
@@ -1177,7 +1190,10 @@ function parseNumber(value: string) {
 }
 
 function formatMetric(value: number) {
-  return value.toFixed(value < 1 ? 3 : 2).replace(".", ",");
+  return value.toLocaleString("it-IT", {
+    minimumFractionDigits: value < 1 ? 4 : 2,
+    maximumFractionDigits: 6,
+  });
 }
 
 const tableHeadStyle: CSSProperties = {

@@ -24,14 +24,18 @@ export type MaterialKey = (typeof MATERIAL_KEYS)[number];
 
 const seededDefaults: Partial<Record<MaterialKey, PricingRules>> = {
   vinile: normalizeRules({
-    basePerM2: 14,
+    basePerM2: 12,
+    fixedOrderFee: 20,
     minOrder: 19,
     rounding: "0.10",
     recognize: true,
     tiers: [
-      { from: 5, to: 9.99, price: 14 },
+      { from: 0, to: 1, price: 42 },
+      { from: 1, to: 3, price: 32 },
+      { from: 3, to: 5, price: 25 },
+      { from: 5, to: 7, price: 20 },
+      { from: 7, to: 10, price: 20 },
       { from: 10, to: 20, price: 12 },
-      { from: 20, to: 50, price: 10 },
     ],
     formats: [
       { w: 3, h: 3, prices: [19, 23, 29, 35, 40, 59, 90] },
@@ -44,6 +48,7 @@ const seededDefaults: Partial<Record<MaterialKey, PricingRules>> = {
   }),
   prespaziato: normalizeRules({
     basePerM2: 16,
+    fixedOrderFee: 20,
     minOrder: 19,
     rounding: "0.10",
     recognize: true,
@@ -61,6 +66,7 @@ const seededDefaults: Partial<Record<MaterialKey, PricingRules>> = {
   }),
   magnetico: normalizeRules({
     basePerM2: 22,
+    fixedOrderFee: 20,
     minOrder: 25,
     rounding: "0.10",
     recognize: true,

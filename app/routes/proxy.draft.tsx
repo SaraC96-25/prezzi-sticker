@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "react-router";
 import { applyMarketingConsent } from "../lib/marketing-consent";
-import { createDraftOrder } from "../lib/shopify-admin";
+import { priceFor, type SimulationInput } from "../lib/pricing";
+import { normalizeMaterialKey } from "../lib/pricing-defaults";
+import { createDraftOrder, fetchProducts } from "../lib/shopify-admin";
 import { sanitizeShopDomain, verifyAppProxySignature } from "../lib/proxy-auth";
 import { unauthenticated } from "../shopify.server";
 
@@ -41,6 +43,7 @@ type DraftPayload = {
     tipo?: string;
     handle?: string;
     variantId?: string | number | null;
+    pricing?: Partial<SimulationInput> | null;
     properties?: Record<string, string | number | boolean | null>;
   }>;
 };
@@ -61,6 +64,29 @@ function normalizeCustomerId(value: string | number | null | undefined) {
   if (raw.startsWith("gid://shopify/Customer/")) return raw;
   if (/^\d+$/.test(raw)) return `gid://shopify/Customer/${raw}`;
   return null;
+}
+
+function pricingInputForItem(item: NonNullable<DraftPayload["items"]>[number]) {
+  if (item.pricing) {
+    return {
+      mode: item.pricing.mode === "standard" ? "standard" : "custom",
+      widthCm: Number(item.pricing.widthCm),
+      heightCm: Number(item.pricing.heightCm),
+      quantity: Number(item.pricing.quantity),
+    } satisfies SimulationInput;
+  }
+
+  const dimension = String(item.properties?.Dimensione ?? "");
+  const quantityText = String(item.properties?.["Quantità"] ?? "");
+  const dimensions = dimension.match(/([0-9]+(?:[.,][0-9]+)?)\s*[×x]\s*([0-9]+(?:[.,][0-9]+)?)/i);
+  const quantity = quantityText.match(/\d+/)?.[0];
+  if (!dimensions || !quantity) return null;
+  return {
+    mode: /su\s*misura/i.test(dimension) ? "custom" : "standard",
+    widthCm: Number(dimensions[1].replace(",", ".")),
+    heightCm: Number(dimensions[2].replace(",", ".")),
+    quantity: Number(quantity),
+  } satisfies SimulationInput;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -188,14 +214,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }>;
 
   try {
+    const { admin } = await unauthenticated.admin(shop);
+    const products = await fetchProducts(admin);
+
     lineItems = payload.items.map((item, index) => {
       const title = item.title?.trim();
-      const price = Number(item.price ?? 0);
       const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
+      const materialKey = normalizeMaterialKey(item.tipo || item.handle);
+      const product = products.find(
+        (candidate) =>
+          candidate.materialKey === materialKey ||
+          normalizeMaterialKey(candidate.handle) === materialKey,
+      );
+      const pricingInput = pricingInputForItem(item);
 
-      if (!title || !Number.isFinite(price) || price < 0) {
-        throw new Error(`L'item ${index + 1} ha titolo o prezzo non valido.`);
+      if (!title || !product || !pricingInput) {
+        throw new Error(`L'item ${index + 1} non contiene dati prezzo completi.`);
       }
+      if (
+        !(pricingInput.widthCm > 0) ||
+        !(pricingInput.heightCm > 0) ||
+        !(pricingInput.quantity > 0)
+      ) throw new Error(`L'item ${index + 1} contiene misure o quantità non valide.`);
+
+      const calculated = priceFor(product.effectiveRules, pricingInput);
+      const price = calculated.total;
 
       const customAttributes = Object.entries(item.properties ?? {}).map(([key, value]) => ({
         key,
@@ -213,18 +256,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         customAttributes,
       };
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Line item non valido.";
-    console.warn(`${logPrefix} Invalid line items`, {
-      shop,
-      error: message,
-    });
-    return Response.json({ error: message }, { status: 400 });
-  }
-
-  try {
-    const { admin } = await unauthenticated.admin(shop);
-
     const wantsMarketing =
       payload.acceptsMarketing === true ||
       payload.marketingConsent?.email === "SUBSCRIBED" ||
