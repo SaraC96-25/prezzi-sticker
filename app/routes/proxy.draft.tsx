@@ -137,33 +137,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     countryCode: (shippingInput.countryCode || "").trim().toUpperCase(),
     phone,
   };
+  const hasShippingAddress = Boolean(
+    shippingAddress.firstName ||
+      shippingAddress.lastName ||
+      shippingAddress.address1 ||
+      shippingAddress.city ||
+      shippingAddress.zip ||
+      shippingAddress.countryCode,
+  );
+  const shippingAddressComplete = Boolean(
+    shippingAddress.firstName &&
+      shippingAddress.lastName &&
+      shippingAddress.address1 &&
+      shippingAddress.city &&
+      shippingAddress.zip &&
+      shippingAddress.countryCode &&
+      (shippingAddress.countryCode !== "IT" || shippingAddress.provinceCode),
+  );
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return Response.json({ error: "Email di spedizione mancante o non valida." }, { status: 400 });
-  }
-
-  if (!phone) {
-    return Response.json({ error: "Telefono di spedizione mancante." }, { status: 400 });
-  }
-
-  if (
-    !shippingAddress.firstName ||
-    !shippingAddress.lastName ||
-    !shippingAddress.address1 ||
-    !shippingAddress.city ||
-    !shippingAddress.zip ||
-    !shippingAddress.countryCode
-  ) {
+  if (hasShippingAddress && !shippingAddressComplete) {
     return Response.json({ error: "Indirizzo di spedizione incompleto." }, { status: 400 });
   }
-
-  if (shippingAddress.countryCode === "IT" && !shippingAddress.provinceCode) {
-    return Response.json({ error: "Provincia richiesta per la spedizione in Italia." }, { status: 400 });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return Response.json({ error: "Email non valida." }, { status: 400 });
   }
 
+  const hasShippingLine = payload.shippingLine != null;
   const shippingAmount = Number(payload.shippingLine?.amount ?? 0);
   const customerId = normalizeCustomerId(payload.customerId);
-  if (!Number.isFinite(shippingAmount) || shippingAmount < 0) {
+  if (hasShippingLine && (!Number.isFinite(shippingAmount) || shippingAmount < 0)) {
     return Response.json({ error: "Costo spedizione non valido." }, { status: 400 });
   }
 
@@ -228,45 +230,54 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       payload.marketingConsent?.email === "SUBSCRIBED" ||
       payload.marketingConsent?.sms === "SUBSCRIBED";
 
-    const consentCustomerId = await applyMarketingConsent(admin, {
-      email,
-      phone,
-      firstName: shippingAddress.firstName,
-      lastName: shippingAddress.lastName,
-      emailState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
-      smsState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
-      consentUpdatedAt: payload.marketingConsent?.consentUpdatedAt,
-    });
+    const consentCustomerId = email
+      ? await applyMarketingConsent(admin, {
+          email,
+          phone,
+          firstName: shippingAddress.firstName,
+          lastName: shippingAddress.lastName,
+          emailState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
+          smsState: wantsMarketing ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
+          consentUpdatedAt: payload.marketingConsent?.consentUpdatedAt,
+        })
+      : null;
 
     console.info(`${logPrefix} Creating draft order`, {
       shop,
       currencyCode: payload.currency || "EUR",
       lineItemsCount: lineItems.length,
-      shippingCountryCode: shippingAddress.countryCode,
-      shippingAmount,
+      shippingCountryCode: shippingAddress.countryCode || "checkout",
+      shippingAmount: hasShippingLine ? shippingAmount : "checkout",
     });
 
-    const result = await createDraftOrder(admin, {
+    const draftInput: Record<string, unknown> = {
       presentmentCurrencyCode: payload.currency || "EUR",
       purchasingEntity: customerId
         ? { customerId }
         : consentCustomerId
           ? { customerId: consentCustomerId }
           : undefined,
-      email,
-      phone,
-      shippingAddress,
-      billingAddress: shippingAddress,
-      shippingLine: {
+      lineItems,
+      note: "Creato da Prezzi Sticker via App Proxy",
+    };
+
+    if (email) draftInput.email = email;
+    if (phone) draftInput.phone = phone;
+    if (shippingAddressComplete) {
+      draftInput.shippingAddress = shippingAddress;
+      draftInput.billingAddress = shippingAddress;
+    }
+    if (hasShippingLine) {
+      draftInput.shippingLine = {
         title: shippingTitle,
         priceWithCurrency: {
           amount: shippingAmount.toFixed(2),
           currencyCode: payload.currency || "EUR",
         },
-      },
-      lineItems,
-      note: "Creato da Prezzi Sticker via App Proxy",
-    });
+      };
+    }
+
+    const result = await createDraftOrder(admin, draftInput);
 
     if (result.userErrors?.length || !result.draftOrder?.invoiceUrl) {
       console.warn(`${logPrefix} Draft order rejected`, {
