@@ -283,6 +283,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const draftInput: Record<string, unknown> = {
       presentmentCurrencyCode: payload.currency || "EUR",
+      allowDiscountCodesInCheckout: true,
       purchasingEntity: customerId
         ? { customerId }
         : consentCustomerId
